@@ -1,0 +1,51 @@
+
+<div class="input-group">
+    <span class="input-group-btn">
+        <button ngf-select="$ctrl.uploadVideo($file)" ngf-pattern="'.mp4'" accept=".mp4"  class="btn btn-success" title="Add new replay" type="button"><i class="fa fa-plus"></i></button>
+    </span>
+    <input placeholder="Find replay video.." ng-model="searchText.name" name="searchText" id="searchText" class="form-control"/>
+</div><!-- /input-group -->
+<div style="width: 100%" ng-if="$ctrl.isUploading">
+    <label>Loading file.. {{$ctrl.currentProgress}}</label>
+    <div class="progress">
+        <div class="progress-bar" role="progressbar" ng-style="{ 'width' : $ctrl.currentProgress }" aria-valuenow="25" aria-valuemin="0" aria-valuemax="100"></div>
+    </div>
+</div>
+<!--<div>TYPE {{$ctrl.promoCodeType}}</div>-->
+<h4 data-ng-if="!$ctrl.replays || $ctrl.replays.length == 0">
+    No replays available!
+</h4>
+<div class="table-responsive">
+    <table class="table" data-ng-if="$ctrl.replays.length > 0">
+        <thead>
+        <tr>
+            <th width="50%">
+                <span title="Order by name" style="cursor: pointer" ng-click="$ctrl.myOrderBy = $ctrl.myOrderBy == 'name' ? '-name' : 'name'">Name</span>
+                <i ng-if="$ctrl.myOrderBy == 'name'" class="pull-right fa fa-sort-up"></i>
+                <i ng-if="$ctrl.myOrderBy == '-name'" class="pull-right fa fa-sort-down"></i>
+            </th>
+            <th width="40%">
+                <span title="Order by upload date" style="cursor: pointer" ng-click="$ctrl.myOrderBy = $ctrl.myOrderBy == 'date' ? '-date' : 'date'">Record/Upload date</span>
+                <i ng-if="$ctrl.myOrderBy == 'date'" class="pull-right fa fa-sort-up"></i>
+                <i ng-if="$ctrl.myOrderBy == '-date'" class="pull-right fa fa-sort-down"></i>
+            </th>
+            <th>&nbsp;</th>
+        </tr>
+        </thead>
+        <tbody data-ng-repeat="replay in $ctrl.replays | orderBy:$ctrl.myOrderBy | filter:searchText">
+            <tr style="cursor: pointer;" data-ng-click="$ctrl.showReplay(replay.name, replay.previewUrl)">
+                <td>{{replay.name}}
+
+                </td>
+                <td>{{replay.date | date :  "dd/MM/yyyy HH:mm"}}</td>
+    <!--            <td>{{::replay.formattedEnd | formatDate}}</td>-->
+                <td>
+    <!--                <button title="Edit" class="btn btn-xs btn-default" ng-click="$ctrl.changeDate(replay)"><i class="fa fa-edit"></i></button>-->
+    <!--                <button title="Send replay by email" data-ng-hide="!replay.emailReference || replay.expired" class="btn btn-xs btn-success" data-ng-click="$ctrl.sendEmail(replay)"><i class="fa fa-envelope"></i></button>-->
+    <!--                <button title="Disable" data-ng-hide="replay.expired" class="btn btn-xs btn-warning" data-ng-click="$ctrl.disablePromocode(replay)"><i class="fa fa-ban"></i></button>-->
+                    <button title="Remove" class="btn btn-xs btn-danger" data-ng-click="$ctrl.deleteReplay(replay); $event.stopPropagation();"><i class="fa fa-trash"></i></button>
+                </td>
+            </tr>
+        </tbody>
+    </table>
+</div>

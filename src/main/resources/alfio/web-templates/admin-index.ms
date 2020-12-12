@@ -62,6 +62,7 @@
     <script nonce="{{nonce}}" src="{{request.contextPath}}/resources/js/admin/feature/event-data-to-collect/event-data-to-collect.js"></script>
 
     <script nonce="{{nonce}}" src="{{request.contextPath}}/resources/js/admin/feature/promo-codes/promo-codes.js"></script>
+    <script nonce="{{nonce}}" src="{{request.contextPath}}/resources/js/admin/feature/replay/replays.js"></script>
 
     <script nonce="{{nonce}}" src="{{request.contextPath}}/resources/js/admin/feature/tickets-remove/tickets-remove.js"></script>
 
@@ -109,7 +110,7 @@
     <script nonce="{{nonce}}" type="text/javascript" src="{{request.contextPath}}/resources/bower_components/dexie/dist/dexie.min.js"></script>
     <script nonce="{{nonce}}" type="text/javascript" src="{{request.contextPath}}/resources/bower_components/papaparse/papaparse.min.js"></script>
     <script nonce="{{nonce}}" type="text/javascript" src="{{request.contextPath}}/resources/bower_components/checklist-model/checklist-model.js"></script>
-    <title>Alf.io Admin</title>
+    <title>Administration console</title>
 </head>
 <body>
     <div class="navbar navbar-default navbar-fixed-top" role="navigation" data-ng-controller="MenuController as ctrl">

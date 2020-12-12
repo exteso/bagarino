@@ -452,6 +452,18 @@
             retrieveMetadata: function(eventName) {
                 return $http.get('/admin/api/events/'+eventName+'/metadata').error(HttpErrorHandler.handle);
             },
+            getEnableVideoStream: function(eventName) {
+                return $http.get('/admin/api/events/'+eventName+'/enableVideoStream').error(HttpErrorHandler.handle);
+            },
+            getAvailableVideoList: function(eventName) {
+                return $http.get('/admin/api/events/'+eventName+'/getAvailableVideoList').error(HttpErrorHandler.handle);
+            },
+            createRoom: function(eventName, callLink) {
+                return $http.post('/admin/api/events/'+eventName+'/createRoom', callLink).error(HttpErrorHandler.handle);
+            },
+            createGuestAccess: function(eventName, callLink) {
+                return $http.post('/admin/api/events/'+eventName+'/createGuestAccess', callLink).error(HttpErrorHandler.handle);
+            },
 
             updateCategoryMetadata: function(eventName, categoryId, metadata) {
                 return $http.put('/admin/api/events/'+eventName+'/category/'+categoryId+'/metadata', metadata).error(HttpErrorHandler.handle);
@@ -732,7 +744,13 @@
                 update: function(promoCodeId, toUpdate) {
                     addUtfOffsetIfNecessary(toUpdate);
                     return $http.post('/admin/api/promo-code/' + promoCodeId, toUpdate);
-                }
+                },
+                sendEmail: function(promoCodeId) {
+                    return $http['post']('/admin/api/promo-code/' + promoCodeId + '/send-email');
+                },
+                sendPromotionalEmail: function(organizationId, body) {
+                    return $http['post']('/admin/api/promo-code/'+organizationId+'/send-promotional-email',body).error(HttpErrorHandler.handle);
+                },
         };
     });
 
@@ -851,6 +869,20 @@
                 });
             }
 
+        };
+    }]);
+
+    baseServices.service('ReplayService', ['$http', 'HttpErrorHandler', '$q', function($http, HttpErrorHandler) {
+        return {
+            getList : function(organizationId) {
+                return $http.get('/admin/api/organization/' + organizationId + '/getAvailableVideoListByOrganizationId').error(HttpErrorHandler.handle);
+            },
+            remove : function(organizationId, fileName) {
+                return $http['delete']('/admin/api/organization/'+organizationId+'/deleteVideo/'+ fileName.replace(/\..+$/, '') + "/" + fileName.split('.').pop());
+            },
+            uploadVideo : function(file, organizationId) {
+                return $http['post']('/admin/api/organization/uploadReplayVideo?organizationId='+organizationId, file).error(HttpErrorHandler.handle);
+            }
         };
     }]);
 

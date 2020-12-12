@@ -20,6 +20,8 @@ import alfio.controller.api.support.EventListItem;
 import alfio.controller.api.support.PageAndContent;
 import alfio.controller.api.support.TicketHelper;
 import alfio.controller.support.TemplateProcessor;
+import alfio.extension.SimpleHttpClient;
+import alfio.extension.SimpleHttpClientResponse;
 import alfio.manager.*;
 import alfio.manager.i18n.I18nManager;
 import alfio.manager.system.ConfigurationLevel;
@@ -28,6 +30,7 @@ import alfio.manager.user.UserManager;
 import alfio.model.*;
 import alfio.model.TicketReservationInvoicingAdditionalInfo.ItalianEInvoicing;
 import alfio.model.metadata.AlfioMetadata;
+import alfio.model.metadata.VideoFile;
 import alfio.model.modification.*;
 import alfio.model.result.ValidationResult;
 import alfio.model.system.ConfigurationKeys;
@@ -52,18 +55,22 @@ import org.apache.commons.lang3.Validate;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.commons.lang3.tuple.Triple;
 import org.springframework.dao.DataAccessException;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.util.StreamUtils;
 import org.springframework.validation.Errors;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
+import java.io.File;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.math.BigDecimal;
+import java.net.http.HttpClient;
 import java.security.Principal;
 import java.time.LocalDate;
 import java.time.ZoneId;
@@ -110,7 +117,6 @@ public class EventApiController {
     private final ConfigurationManager configurationManager;
     private final ExtensionManager extensionManager;
     private final ClockProvider clockProvider;
-
 
     @ExceptionHandler(DataAccessException.class)
     public String exception(DataAccessException e) {
@@ -721,11 +727,186 @@ public class EventApiController {
             .map(event -> eventManager.updateMetadata(event, metadataModification.toMetadataObj())));
     }
 
+    @PostMapping("/events/{eventName}/createRoom")
+    public ResponseEntity<String> createRoom(@PathVariable("eventName") String eventName,
+                                                  @RequestBody Map<String,Object> callLink,
+                                                  Principal principal) {
+
+
+//        return ResponseEntity.of(Optional.of("http://localsticazzi?jwt=hajdfbgauhbvui_9e7y87wy8w89g8wgw"));
+        var event = eventManager.getSingleEvent(eventName, principal.getName());
+        var baseUrl = configurationManager.getFor(ConfigurationKeys.LOCAL_URL_FOR_JITSI_JWT, ConfigurationLevel.organization(event.getOrganizationId())).getValueOrDefault(null);
+        if (baseUrl == null || baseUrl.equals("")){
+            return ResponseEntity.of(Optional.of("NO_DATA"));
+        }
+
+        var simpleHttpClient = new SimpleHttpClient(HttpClient.newBuilder().build());
+        SimpleHttpClientResponse result = null;
+        try {
+            var headerAndBody = GetBodyForProxy(true,principal,event,callLink);
+            result = simpleHttpClient.post(baseUrl,headerAndBody.getLeft(),"Pippo");
+            result = simpleHttpClient.post(baseUrl,headerAndBody.getLeft(),headerAndBody.getRight());
+            if (result.isSuccessful()) {
+                var res = result.getJsonBody(Map.class);
+                if (res.containsKey("url"))
+                    return ResponseEntity.of(Optional.of(res.get("url").toString()));
+                else
+                    throw new IOException("Unable to parse Proxy result!");
+            } else {
+                var msg = "Unable to invoke local proxy. StatusCode:" + result.getCode();
+                log.error(msg);
+                throw new IOException(msg);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+            return new ResponseEntity<String>(e.getMessage(), new HttpHeaders(), HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+
+    }
+
+    @PostMapping("/events/{eventName}/createGuestAccess")
+    public ResponseEntity<String> createGuestAccess(@PathVariable("eventName") String eventName,
+                                             @RequestBody Map<String,Object> callLink,
+                                             Principal principal) {
+        var event = eventManager.getSingleEvent(eventName, principal.getName());
+        var baseUrl = configurationManager.getFor(ConfigurationKeys.LOCAL_URL_FOR_JITSI_JWT, ConfigurationLevel.organization(event.getOrganizationId())).getValueOrDefault(null);
+        if (baseUrl == null || baseUrl.equals("")){
+            return ResponseEntity.of(Optional.of("NO_DATA"));
+        }
+
+        var simpleHttpClient = new SimpleHttpClient(HttpClient.newBuilder().build());
+        SimpleHttpClientResponse result = null;
+        try {
+            var headerAndBody = GetBodyForProxy(false,principal,event,callLink);
+            result = simpleHttpClient.post(baseUrl,headerAndBody.getLeft(),headerAndBody.getRight());
+            if (result.isSuccessful()) {
+                var res = result.getJsonBody(Map.class);
+                if (res.containsKey("url"))
+                    return ResponseEntity.of(Optional.of(res.get("url").toString()));
+                else
+                    throw new IOException("Unable to parse Proxy result!");
+            } else {
+                var msg = "Unable to invoke local proxy. StatusCode:" + result.getCode();
+                log.error(msg);
+                throw new IOException(msg);
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+            return new ResponseEntity<String>(e.getMessage(), new HttpHeaders(), HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    private Pair<Map<String,String>,Map<String,Object>> GetBodyForProxy(boolean isModerator, Principal principal, Event event, Map<String,Object> callLink){
+
+        var user = userManager.findUserByUsername(principal.getName());
+
+        var headers = new HashMap<String,String>();
+        headers.put("Content-Type", "application/json; charset=UTF-8");
+        headers.put("Accept", "application/json");
+
+        var body = new HashMap<String,Object>();
+        body.put("user", isModerator ? user.getUsername() + "-" + user.getId() : "GuestFor-"+ user.getUsername() + "-" + user.getId());
+        body.put("email", user.getEmailAddress());
+        body.put("identifier", isModerator ? user.getId() : UUID.randomUUID());
+        body.put("start", callLink.get("validFrom"));
+        body.put("end", callLink.get("validTo"));
+        body.put("room", event.getShortName() + "_" + event.getId());
+        body.put("base_url", callLink.get("link"));
+        body.put("moderator", isModerator);
+
+        return Pair.of(headers,body);
+    }
+
     @GetMapping("/events/{eventName}/metadata")
     public ResponseEntity<AlfioMetadata> loadMetadata(@PathVariable("eventName") String eventName,
                                                       Principal principal) {
         return ResponseEntity.of(eventManager.getOptionalEventAndOrganizationIdByName(eventName, principal.getName())
             .map(eventManager::getMetadataForEvent));
+    }
+
+    @GetMapping("/events/{eventName}/enableVideoStream")
+    public ResponseEntity<Boolean> enableVideoStream(@PathVariable("eventName") String eventName,
+                                                      Principal principal) {
+        return ResponseEntity.of(eventManager.getOptionalEventAndOrganizationIdByName(eventName, principal.getName())
+            .map(eventManager::getEnableVideoStream));
+    }
+
+    @GetMapping("/events/{eventName}/getAvailableVideoList")
+    public ResponseEntity<List<VideoFile>> getAvailableVideoList(@PathVariable("eventName") String eventName,
+                                                       Principal principal) {
+        return ResponseEntity.of(eventManager.getOptionalEventAndOrganizationIdByName(eventName, principal.getName())
+            .map( x -> eventManager.getAvailableVideoList(x,eventName)));
+    }
+
+    @GetMapping("/events/{eventName}/getVideoStream/{fileName}")
+    public void getVideoStream(HttpServletResponse response,HttpServletRequest request,
+                                                            @PathVariable("eventName") String eventName,
+                                                            @PathVariable("fileName") String fileName,
+                                                            Principal principal) {
+        var event = eventManager.getOptionalEventAndOrganizationIdByName(eventName, principal.getName());
+        var filePath = eventManager.getVideoStreamPath(event.get(), fileName + ".mp4");
+        try {
+            MultipartFileSender.fromFile(new File(filePath))
+                .with(request)
+                .with(response)
+                .serveResource();
+        } catch (Exception e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+
+    }
+
+    @GetMapping("/organization/{organizationId}/getAvailableVideoListByOrganizationId")
+    public ResponseEntity<List<VideoFile>> getAvailableVideoListByOrganizationId(@PathVariable("organizationId") int organizationId,
+                                                                 Principal principal) {
+        var res = eventManager.getAvailableVideoListByOrganizationId(organizationId);
+        return ResponseEntity.of(Optional.of(res));
+    }
+
+    @GetMapping("/organization/{organizationId}/getVideoStreamByOrganizationId/{fileName}")
+    public void getVideoStreamByOrganizationId(HttpServletResponse response, HttpServletRequest request,
+                               @PathVariable("organizationId") int organizationId,
+                               @PathVariable("fileName") String fileName,
+                               Principal principal) {
+//        var event = eventManager.getOptionalEventAndOrganizationIdByName(eventName, principal.getName());
+        var filePath = eventManager.getVideoStreamPathByOrganizationId(organizationId, fileName + ".mp4");
+        try {
+            MultipartFileSender.fromFile(new File(filePath))
+                .with(request)
+                .with(response)
+                .serveResource();
+        } catch (Exception e) {
+            // TODO Auto-generated catch block
+            e.printStackTrace();
+        }
+
+    }
+
+    @DeleteMapping("/organization/{organizationId}/deleteVideo/{fileName}/{fileExt}")
+    public ResponseEntity<Boolean> deleteVideo(@PathVariable("organizationId") int organizationId,
+                                                @PathVariable("fileName") String fileName,
+                                                @PathVariable("fileExt") String fileExt
+                                                ) {
+        return ResponseEntity.of(Optional.of(eventManager.deleteVideo(organizationId, fileName+"."+fileExt)));
+    }
+
+    @PostMapping("/organization/uploadReplayVideo")
+    public ResponseEntity<String> uploadFile(@RequestParam("file") MultipartFile file, @RequestParam("organizationId") int organizationId) {
+
+        if (file.isEmpty()) {
+            return new ResponseEntity<String>("No file selected", new HttpHeaders(), HttpStatus.INTERNAL_SERVER_ERROR);
+        }
+
+        try {
+            // Get the file and save it to FS
+            byte[] bytes = file.getBytes();
+            return ResponseEntity.of(Optional.of(eventManager.saveVideo(organizationId,bytes,file.getOriginalFilename())));
+
+        } catch (IOException e) {
+            e.printStackTrace();
+            return new ResponseEntity<String>(e.getMessage(), new HttpHeaders(), HttpStatus.INTERNAL_SERVER_ERROR);
+        }
     }
 
     @PutMapping("/events/{eventName}/category/{categoryId}/metadata")

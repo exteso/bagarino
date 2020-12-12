@@ -7,13 +7,22 @@
             <th>Link</th>
             <th>Active from</th>
             <th>to</th>
+            <th data-ng-if="$ctrl.metadata.attributes.enableJitsiJWT">&nbsp;</th>
         </tr>
         </thead>
         <tbody>
         <tr data-ng-repeat="callLink in $ctrl.metadata.onlineConfiguration.callLinks">
-            <td><a ng-href="{{callLink.link}}" rel="noopener" target="_blank">{{callLink.link}}</a></td>
+            <td>
+                <a ng-href="{{callLink.link}}" rel="noopener" target="_blank">{{callLink.link}}</a>
+            </td>
             <td data-ng-bind="callLink.validFrom | formatDate"></td>
             <td data-ng-bind="callLink.validTo | formatDate"></td>
+            <td data-ng-if="$ctrl.metadata.attributes.enableJitsiJWT">
+                <div class="pull-right">
+                    <button class="btn btn-sm btn-success" data-ng-click="$ctrl.createRoom(callLink)" title="Start meeting"><i class="fa fa-tv"></i></button>
+                    <button class="btn btn-sm btn-warning" data-ng-click="$ctrl.createGuestAccess(callLink)" title="Create guest access"><i class="fa fa-user-plus"></i></button>
+                </div>
+            </td>
         </tr>
         </tbody>
     </table>

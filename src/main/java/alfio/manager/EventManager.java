@@ -27,6 +27,7 @@ import alfio.model.Ticket.TicketStatus;
 import alfio.model.TicketFieldConfiguration.Context;
 import alfio.model.api.v1.admin.EventCreationRequest;
 import alfio.model.metadata.AlfioMetadata;
+import alfio.model.metadata.VideoFile;
 import alfio.model.modification.*;
 import alfio.model.modification.EventModification.AdditionalField;
 import alfio.model.result.ErrorCode;
@@ -44,6 +45,7 @@ import alfio.util.Json;
 import alfio.util.MonetaryUtil;
 import ch.digitalfondue.npjt.AffectedRowCountAndKey;
 import lombok.AllArgsConstructor;
+import lombok.SneakyThrows;
 import lombok.extern.log4j.Log4j2;
 import org.apache.commons.collections4.CollectionUtils;
 import org.apache.commons.collections4.IterableUtils;
@@ -54,16 +56,31 @@ import org.apache.commons.lang3.tuple.Triple;
 import org.flywaydb.core.Flyway;
 import org.springframework.core.env.Environment;
 import org.springframework.core.env.Profiles;
+import org.springframework.core.io.InputStreamResource;
+import org.springframework.http.ResponseEntity;
 import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.util.Assert;
 
+import java.io.FileInputStream;
+import java.io.FileNotFoundException;
+import java.io.IOException;
+import java.io.InputStreamReader;
 import java.math.BigDecimal;
+import java.nio.file.DirectoryStream;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.security.Principal;
+import java.text.SimpleDateFormat;
+import java.time.LocalDateTime;
+import java.time.OffsetDateTime;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
+import java.time.format.DateTimeFormatter;
 import java.time.temporal.ChronoUnit;
 import java.util.*;
 import java.util.function.Consumer;
@@ -122,6 +139,14 @@ public class EventManager {
 
     public EventAndOrganizationId getEventAndOrganizationId(String eventName, String username) {
         return getOptionalEventAndOrganizationIdByName(eventName, username).orElseThrow(IllegalStateException::new);
+    }
+
+    public Optional<AlfioMetadata> getEventMetaDataByIdMatchAttribute(int eventId, String attributeMatch) {
+        return eventRepository.findEventMetadataByIdMatchAttribute(eventId, attributeMatch);
+    }
+
+    public Optional<AlfioMetadata> getEventMetaDataById(int eventId) {
+        return eventRepository.findEventMetadataById(eventId);
     }
 
     public Optional<Event> getOptionalByName(String eventName, String username) {
@@ -327,7 +352,7 @@ public class EventManager {
         final ZonedDateTime end = em.getEnd().toZonedDateTime(zoneId);
         eventRepository.updateHeader(eventId, em.getDisplayName(), em.getWebsiteUrl(), em.getExternalUrl(), em.getTermsAndConditionsUrl(),
             em.getPrivacyPolicyUrl(), em.getImageUrl(), em.getFileBlobId(), em.getLocation(), latitude, longitude,
-            begin, end, timeZone, em.getOrganizationId(), em.getLocales(), em.getFormat());
+            begin, end, timeZone, em.getOrganizationId(), em.getLocales(), em.getFormat(), em.getMetadata());
 
         createOrUpdateEventDescription(eventId, em);
 
@@ -876,7 +901,24 @@ public class EventManager {
                              String description,
                              String emailReference,
                              PromoCodeDiscount.CodeType codeType,
-                             Integer hiddenCategoryId) {
+                             Integer hiddenCategoryId ) {
+        addPromoCode(promoCode, eventId, organizationId, start, end, discountAmount, discountType, categoriesId, maxUsage, description,emailReference, codeType, hiddenCategoryId, null);
+    }
+
+    public void addPromoCode(String promoCode,
+                             Integer eventId,
+                             Integer organizationId,
+                             ZonedDateTime start,
+                             ZonedDateTime end,
+                             int discountAmount,
+                             DiscountType discountType,
+                             List<Integer> categoriesId,
+                             Integer maxUsage,
+                             String description,
+                             String emailReference,
+                             PromoCodeDiscount.CodeType codeType,
+                             Integer hiddenCategoryId,
+                             AlfioMetadata metadata) {
 
         Validate.isTrue(promoCode.length() >= 7, "min length is 7 chars");
         Validate.isTrue((eventId != null && organizationId == null) || (eventId == null && organizationId != null), "eventId or organizationId must be not null");
@@ -909,7 +951,11 @@ public class EventManager {
             discountType = DiscountType.NONE;
         }
 
-        promoCodeRepository.addPromoCode(promoCode, eventId, organizationId, start, end, discountAmount, discountType, Json.GSON.toJson(categoriesId), maxUsage, description, emailReference, codeType, hiddenCategoryId);
+        if (metadata != null) {
+            promoCodeRepository.addTaggedPromoCode(promoCode, eventId, organizationId, start, end, discountAmount, discountType, Json.GSON.toJson(categoriesId), maxUsage, description, emailReference, codeType, hiddenCategoryId, metadata);
+        } else {
+            promoCodeRepository.addPromoCode(promoCode, eventId, organizationId, start, end, discountAmount, discountType, Json.GSON.toJson(categoriesId), maxUsage, description, emailReference, codeType, hiddenCategoryId);
+        }
     }
     
     public void deletePromoCode(int promoCodeId) {
@@ -922,6 +968,14 @@ public class EventManager {
         String categoriesJson = CollectionUtils.isEmpty(categories) ? null : Json.toJson(categories);
 
         promoCodeRepository.updateEventPromoCode(promoCodeId, start, end, maxUsage, categoriesJson, description, emailReference, hiddenCategoryId);
+    }
+
+    public void updatePromoCodeWithMetaData(int promoCodeId, ZonedDateTime start, ZonedDateTime end, Integer maxUsage, List<Integer> categories, String description, String emailReference, Integer hiddenCategoryId, AlfioMetadata alfioMetadata) {
+        Validate.isTrue(StringUtils.length(description) < 1025, "Description can be maximum 1024 chars");
+        Validate.isTrue(StringUtils.length(emailReference) < 257, "Description can be maximum 256 chars");
+        String categoriesJson = CollectionUtils.isEmpty(categories) ? null : Json.toJson(categories);
+
+        promoCodeRepository.updateEventPromoCodeWithMetadata(promoCodeId, start, end, maxUsage, categoriesJson, description, emailReference, hiddenCategoryId, alfioMetadata);
     }
     
     public List<PromoCodeDiscountWithFormattedTimeAndAmount> findPromoCodesInEvent(int eventId) {
@@ -1074,11 +1128,27 @@ public class EventManager {
     }
 
     public boolean updateMetadata(Event event, AlfioMetadata metadata) {
+//<<<<<<< HEAD
         var updatedMetadata = extensionManager.handleMetadataUpdate(event, organizationRepository.getById(event.getOrganizationId()), metadata);
-        if(updatedMetadata != null) {
-            eventRepository.updateMetadata(updatedMetadata, event.getId());
+        var baseUrl = configurationManager.getFor(ConfigurationKeys.LOCAL_URL_FOR_JITSI_JWT, ConfigurationLevel.organization(event.getOrganizationId())).getValueOrDefault(null);
+        HashMap<String, Object> attr = null;
+        if (baseUrl!=null && !baseUrl.equals("")){
+            attr = new HashMap<String, Object>();
+            attr.putAll(metadata.getAttributes());
+            attr.put("enableJitsiJWT",true);
         }
-        eventRepository.updateMetadata(metadata, event.getId());
+        if(updatedMetadata == null) {
+            updatedMetadata = metadata;
+        }
+        if (attr!= null) {
+            updatedMetadata = new AlfioMetadata(updatedMetadata.getTags(),updatedMetadata.getOnlineConfiguration(),updatedMetadata.getRequirementsDescriptions(),updatedMetadata.getConditionsToBeAccepted(),attr);
+//=======
+//        var updatedMetadata = extensionManager.handleMetadataUpdate(event, organizationRepository.getById(event.getOrganizationId()), metadata);
+//        if(updatedMetadata != null) {
+//            eventRepository.updateMetadata(updatedMetadata, event.getId());
+//>>>>>>> 7e28b7decf8894d981715b92272f4124a4461e09
+        }
+        eventRepository.updateMetadata(updatedMetadata, event.getId());
         return true;
     }
 
@@ -1088,6 +1158,140 @@ public class EventManager {
 
     public AlfioMetadata getMetadataForEvent(EventAndOrganizationId event) {
         return eventRepository.getMetadataForEvent(event.getId());
+    }
+
+    public Boolean getEnableVideoStream(EventAndOrganizationId event){
+        return !configurationManager.getFor(ConfigurationKeys.LOCAL_RES_FOR_VIDEOSTREAM, ConfigurationLevel.organization(event.getOrganizationId())).getValueOrDefault("").isBlank();
+    }
+
+    @SneakyThrows
+    private LocalDateTime convertToNewFormat(Path path) {
+        BasicFileAttributes attr = Files.readAttributes(path, BasicFileAttributes.class);
+        var res = attr.lastModifiedTime();
+        if (res == null) {
+            res = attr.creationTime();
+        }
+        return LocalDateTime.ofInstant( res.toInstant(), ZoneId.systemDefault());
+//        var splitted = StringUtils.split(path.getFileName().toString().replace(".mp4",""),'_');
+//        var dateStr = splitted[splitted.length - 1];
+//        TimeZone utc = TimeZone.getTimeZone("UTC");
+//        SimpleDateFormat sourceFormat = new SimpleDateFormat("yyyy-MM-dd-HH-mm-ss");
+//        sourceFormat.setTimeZone(utc);
+//        Date convertedDate = sourceFormat.parse(dateStr);
+//        return LocalDateTime.ofInstant(convertedDate.toInstant(),
+//            ZoneId.systemDefault());
+    }
+
+    @SneakyThrows
+    public List<VideoFile> getAvailableVideoList(EventAndOrganizationId event, String eventName) {
+        var localRes = StringUtils.split(configurationManager.getFor(ConfigurationKeys.LOCAL_RES_FOR_VIDEOSTREAM, ConfigurationLevel.organization(event.getOrganizationId())).getValueOrDefault(""),'|');
+        List<VideoFile> res = new ArrayList<>();
+        try {
+            try (DirectoryStream<Path> stream = Files.newDirectoryStream(Paths.get(localRes[0].trim()),
+                    path -> path.toFile().isFile() && path.toString().toLowerCase().endsWith(".mp4"))
+                ){
+                stream.forEach(path -> {
+                    var item = new VideoFile(
+                        localRes[1].trim() + "/" + path.getFileName().toString(),
+                        path.getFileName().toString(),
+                        "/admin/api/events/"+eventName+"/getVideoStream/"+path.getFileName().toString(),
+                        convertToNewFormat(path)
+
+                    );
+                    res.add(item); });
+             }
+        } catch (IOException e) {
+            e.printStackTrace();
+            throw e;
+        }
+
+//        provaccia_2020-06-22-07-44-21.mp4
+//        var testData = new VideoFile(Path.of(localRes[1].trim(),));
+//        testData.setName("prova");
+//        testData.setDate(LocalDateTime.now());
+//        testData.setLink(localRes[1].trim());
+//        List<VideoFile>res = new ArrayList();
+//        res.add(testData);
+//        res.sort(VideoFile::compareTo);
+        Collections.sort(res);
+        Collections.reverse(res);
+        return res;
+    }
+
+    public String getVideoStreamPath(EventAndOrganizationId event,String fileName){
+        return getVideoStreamPathByOrganizationId(event.getOrganizationId(),fileName);
+//        var localRes = StringUtils.split(configurationManager.getFor(ConfigurationKeys.LOCAL_RES_FOR_VIDEOSTREAM, ConfigurationLevel.organization(event.getOrganizationId())).getValueOrDefault(""),'|');
+//        return localRes[0] + "/" + fileName;
+    }
+
+    @SneakyThrows
+    public List<VideoFile> getAvailableVideoListByOrganizationId(int organizationId) {
+        var localRes = StringUtils.split(configurationManager.getFor(ConfigurationKeys.LOCAL_RES_FOR_VIDEOSTREAM, ConfigurationLevel.organization(organizationId)).getValueOrDefault(""),'|');
+        List<VideoFile> res = new ArrayList<>();
+        try {
+            try (DirectoryStream<Path> stream = Files.newDirectoryStream(Paths.get(localRes[0].trim()),
+                path -> path.toFile().isFile() && path.toString().toLowerCase().endsWith(".mp4"))
+            ){
+                stream.forEach(path -> {
+                    var item = new VideoFile(
+                        localRes[1].trim() + "/" + path.getFileName().toString(),
+                        path.getFileName().toString(),
+                        "/admin/api/organization/"+organizationId+"/getVideoStreamByOrganizationId/"+path.getFileName().toString(),
+                        convertToNewFormat(path)
+
+                    );
+                    res.add(item); });
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+            throw e;
+        }
+
+//        provaccia_2020-06-22-07-44-21.mp4
+//        var testData = new VideoFile(Path.of(localRes[1].trim(),));
+//        testData.setName("prova");
+//        testData.setDate(LocalDateTime.now());
+//        testData.setLink(localRes[1].trim());
+//        List<VideoFile>res = new ArrayList();
+//        res.add(testData);
+//        res.sort(VideoFile::compareTo);
+        Collections.sort(res);
+        Collections.reverse(res);
+        return res;
+    }
+
+    @SneakyThrows
+    public Boolean deleteVideo(int organizationId, String fileName) {
+        var localRes = StringUtils.split(configurationManager.getFor(ConfigurationKeys.LOCAL_RES_FOR_VIDEOSTREAM, ConfigurationLevel.organization(organizationId)).getValueOrDefault(""),'|');
+        var filePath = localRes[0].trim().endsWith("/") ? localRes[0].trim() + fileName : localRes[0].trim() + "/" + fileName;
+        Path fileToDeletePath = Paths.get(filePath);
+        try {
+          return Files.deleteIfExists(fileToDeletePath);
+        } catch (IOException e) {
+            e.printStackTrace();
+            throw e;
+        }
+    }
+
+    @SneakyThrows
+    public String saveVideo(int organizationId, byte[] bytes, String fileName) {
+        var localRes = StringUtils.split(configurationManager.getFor(ConfigurationKeys.LOCAL_RES_FOR_VIDEOSTREAM, ConfigurationLevel.organization(organizationId)).getValueOrDefault(""),'|');
+        var filePath = localRes[0].trim().endsWith("/") ? localRes[0].trim() + fileName : localRes[0].trim() + "/" + replaceSpecialChars(fileName);
+        Path fileToSave = Paths.get(filePath);
+        Files.write(fileToSave, bytes);
+        return "File Saved";
+    }
+
+    private String replaceSpecialChars(String str) {
+        var fExt = str.substring(str.lastIndexOf("."));
+        var fName = str.substring(0, str.lastIndexOf("."));
+        fName = fName.replaceAll("[^a-zA-Z0-9]", "_");
+        return fName + fExt;
+    }
+
+    public String getVideoStreamPathByOrganizationId(int organizationId,String fileName){
+        var localRes = StringUtils.split(configurationManager.getFor(ConfigurationKeys.LOCAL_RES_FOR_VIDEOSTREAM, ConfigurationLevel.organization(organizationId)).getValueOrDefault(""),'|');
+        return localRes[0] + "/" + fileName;
     }
 
     public AlfioMetadata getMetadataForCategory(EventAndOrganizationId event, int categoryId) {

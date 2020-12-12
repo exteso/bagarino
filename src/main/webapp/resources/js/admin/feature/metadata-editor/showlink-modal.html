@@ -1,0 +1,21 @@
+<div class="modal-header">
+    <h2 class="modal-title">{{$ctrl.title}}</h2>
+</div>
+<div class="modal-body">
+<!--    <div class="page-header">-->
+        <h4 style="margin-left: 1rem;">Choose you action</h4>
+        <div style="padding: 1rem;">
+            <a class="btn btn-success" ng-href="{{$ctrl.link}}" target="_blank"><i class="fa fa-external-link"></i> Open link</a>
+            <button class="btn btn-primary" data-ng-click="displayLink = !displayLink"><i class="fa fa-eye"></i> Display link</button>
+            <button class="btn btn-warning" data-ng-click="$ctrl.copy(copied)"><i class="fa fa-copy"></i> Copy link</button>
+            <span id="spancopied"></span>
+        </div>
+        <div data-ng-if="displayLink" style="word-wrap: break-word; margin: 1rem; padding: 1rem; border: 1px dashed #d3d3d3;">{{$ctrl.link}}</div>
+        <input type="hidden" id="linkText" value="{{$ctrl.link}}">
+<!--    </div>-->
+</div>
+<div class="modal-footer">
+    <div class="pull-right">
+        <button type="button" title="Close this window" class="btn btn-default" data-ng-click="$ctrl.cancel()" style="margin-bottom: 10px"><i class="fa fa-check"></i> OK</button>
+    </div>
+</div>

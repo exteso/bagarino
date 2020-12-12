@@ -225,11 +225,17 @@ public class NotificationManager {
         List<Mailer.Attachment> attachments = new ArrayList<>();
         if(event.getFormat() == Event.EventFormat.ONLINE) { // generate only calendar invitation
             var baseUrl = configurationManager.getFor(BASE_URL, ConfigurationLevel.event(event)).getRequiredValue();
-            var eventMetadata = Optional.ofNullable(eventRepository.getMetadataForEvent(event.getId()).getRequirementsDescriptions()).flatMap(m -> Optional.ofNullable(m.get(locale.getLanguage())));
+            var alfioMetadata = eventRepository.getMetadataForEvent(event.getId());
+            var eventMetadata = Optional.ofNullable(alfioMetadata.getRequirementsDescriptions()).flatMap(m -> Optional.ofNullable(m.get(locale.getLanguage())));
             var categoryMetadata = Optional.ofNullable(ticketCategoryRepository.getMetadata(event.getId(), ticketCategory.getId()).getRequirementsDescriptions()).flatMap(m -> Optional.ofNullable(m.get(locale.getLanguage())));
-            attachments.add(CustomMessageManager.generateCalendarAttachmentForOnlineEvent(ticket,
-                reservation, ticketCategory, organization, TicketReservationManager.ticketOnlineCheckInUrl(event, ticket, baseUrl),
-                categoryMetadata.or(() -> eventMetadata).orElse("")));
+            if (alfioMetadata == null
+                || alfioMetadata.getAttributes() == null
+                || !alfioMetadata.getAttributes().containsKey(Event.EventOccurrence.CARNET.toString())) {
+                //attachment not needed for CARNET events
+                attachments.add(CustomMessageManager.generateCalendarAttachmentForOnlineEvent(ticket,
+                    reservation, ticketCategory, organization, TicketReservationManager.ticketOnlineCheckInUrl(event, ticket, baseUrl),
+                    categoryMetadata.or(() -> eventMetadata).orElse("")));
+            }
         } else {
             attachments.add(CustomMessageManager.generateTicketAttachment(ticket, reservation, ticketCategory, organization));
         }
@@ -319,6 +325,11 @@ public class NotificationManager {
             .flatMap(id -> emailMessageRepository.loadIdsWaitingForProcessing(id, now).stream())
             .distinct()
             .forEach(messageId -> counter.addAndGet(processMessage(messageId)));
+
+        //processing promo codes
+        emailMessageRepository.loadIdsPromoCodesForProcessing(now)
+            .forEach(messageId -> counter.addAndGet(processMessage(messageId)));
+
         return counter.get();
     }
 
@@ -333,7 +344,7 @@ public class NotificationManager {
 
 
         try {
-            int result = Optional.ofNullable(tx.execute(status -> emailMessageRepository.updateStatus(message.getEventId(), message.getChecksum(), IN_PROCESS.name(), Arrays.asList(WAITING.name(), RETRY.name())))).orElse(0);
+            int result = Optional.ofNullable(tx.execute(status -> emailMessageRepository.updateStatus(messageId, message.getEventId(), message.getChecksum(), IN_PROCESS.name(), Arrays.asList(WAITING.name(), RETRY.name(), PROMO_CODE.name())))).orElse(0);
             if(result > 0) {
                 return Optional.ofNullable(tx.execute(status -> {
                     sendMessage(event, message);
@@ -343,7 +354,7 @@ public class NotificationManager {
                 log.debug("no messages have been updated on DB for the following criteria: eventId: {}, checksum: {}", message.getEventId(), message.getChecksum());
             }
         } catch(Exception e) {
-            tx.execute(status -> emailMessageRepository.updateStatusAndAttempts(message.getId(), RETRY.name(), DateUtils.addMinutes(new Date(), message.getAttempts() + 1), message.getAttempts() + 1, Arrays.asList(IN_PROCESS.name(), WAITING.name(), RETRY.name())));
+            tx.execute(status -> emailMessageRepository.updateStatusAndAttempts(message.getId(), RETRY.name(), DateUtils.addMinutes(new Date(), message.getAttempts() + 1), message.getAttempts() + 1, Arrays.asList(IN_PROCESS.name(), WAITING.name(), RETRY.name(), PROMO_CODE.name())));
             log.warn("could not send message: ",e);
         }
         return 0;
@@ -351,7 +362,7 @@ public class NotificationManager {
 
     private void sendMessage(EventAndOrganizationId event, EmailMessage message) {
         String displayName = eventRepository.getDisplayNameById(message.getEventId());
-        mailer.send(event, displayName, message.getRecipient(), message.getCc(), message.getSubject(), message.getMessage(), Optional.ofNullable(message.getHtmlMessage()), decodeAttachments(message.getAttachments()));
+        mailer.send(event, message.getStatus() == PROMO_CODE ? "Info" : displayName, message.getRecipient(), message.getCc(), message.getSubject(), message.getMessage(), Optional.ofNullable(message.getHtmlMessage()), decodeAttachments(message.getAttachments()));
         emailMessageRepository.updateStatusToSent(message.getEventId(), message.getChecksum(), ZonedDateTime.now(clockProvider.getClock()), Collections.singletonList(IN_PROCESS.name()));
     }
 

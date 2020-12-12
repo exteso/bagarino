@@ -54,6 +54,17 @@ public interface EventRepository {
     @Query("select org_id from event where id = :eventId")
     int findOrganizationIdByEventId(@Bind("eventId") int eventId);
 
+    @Query("SELECT metadata" +
+        " FROM event" +
+        " WHERE id = :eventId AND metadata->'attributes'->> :attributeToMatch IS NOT NULL")
+    @JSONData Optional<AlfioMetadata> findEventMetadataByIdMatchAttribute(@Bind("eventId") int eventId,
+                                                                          @Bind("attributeToMatch") String attributeToMatch);
+    @Query("SELECT metadata" +
+        " FROM event" +
+        " WHERE id = :eventId")
+    @JSONData Optional<AlfioMetadata> findEventMetadataById(@Bind("eventId") int eventId);
+
+
     default ZoneId getZoneIdByEventId(int eventId) {
         return TimeZone.getTimeZone(getTimeZoneByEventId(eventId)).toZoneId();
     }
@@ -125,7 +136,7 @@ public interface EventRepository {
 
     @Query("update event set display_name = :displayName, website_url = :websiteUrl, external_url = :externalUrl, website_t_c_url = :termsUrl, website_p_p_url = :privacyUrl, image_url = :imageUrl, file_blob_id = :fileBlobId, " +
             "location = :location, latitude = :latitude, longitude = :longitude, start_ts = :start_ts, " +
-            "end_ts = :end_ts, time_zone = :time_zone, org_id = :organizationId, locales = :locales, format = :format where id = :id")
+            "end_ts = :end_ts, time_zone = :time_zone, org_id = :organizationId, locales = :locales, format = :format , metadata = :metadata::jsonb where id = :id")
     int updateHeader(@Bind("id") int id,
                      @Bind("displayName") String displayName,
                      @Bind("websiteUrl") String websiteUrl,
@@ -142,7 +153,8 @@ public interface EventRepository {
                      @Bind("time_zone") String timeZone,
                      @Bind("organizationId") int organizationId,
                      @Bind("locales") int locales,
-                     @Bind("format") Event.EventFormat format);
+                     @Bind("format") Event.EventFormat format,
+                     @Bind("metadata") @JSONData AlfioMetadata alfioMetadata);
 
     @Query("update event set currency = :currency, available_seats = :available_seats, vat_included = :vat_included, vat = :vat, allowed_payment_proxies = :paymentProxies, vat_status = :vatStatus, src_price_cts = :srcPriceCts where id = :eventId")
     int updatePrices(@Bind("currency") String currency,

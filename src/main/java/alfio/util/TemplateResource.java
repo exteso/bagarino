@@ -142,6 +142,36 @@ public enum TemplateResource {
             return buildModelForTicketEmail(organization, event, sampleTicketReservation(event.getZoneId()), "http://your-domain.tld", "http://your-domain.tld/ticket-url", "http://your-domain.tld/calendar-url", sampleTicket(event.getZoneId()), ticketCategory, Map.of("onlineCheckInUrl", "https://your-domain.tld/check-in", "prerequisites", "An internet connection is required to join the event"));
         }
     },
+    TICKET_EMAIL_FOR_ONLINE_EVENT_CODE_AMOUNT("/alfio/templates/ticket-email-online-code-amount", TemplateResource.MULTIPART_ALTERNATIVE_MIMETYPE, TemplateManager.TemplateOutput.TEXT) {
+        @Override
+        public Map<String, Object> prepareSampleModel(Organization organization, Event event, Optional<ImageData> imageData) {
+            var now = ZonedDateTime.now(event.getZoneId());
+            TicketCategory ticketCategory = new TicketCategory(0, now, now, 42, "Ticket", false, TicketCategory.Status.ACTIVE, event.getId(), false, 1000, null, null, null, null, null, "CHF", 0, null);
+            return buildModelForTicketEmail(organization, event, sampleTicketReservation(event.getZoneId()), "http://your-domain.tld", "http://your-domain.tld/ticket-url", "http://your-domain.tld/calendar-url", sampleTicket(event.getZoneId()), ticketCategory, Map.of("onlineCheckInUrl", "https://your-domain.tld/check-in", "prerequisites", "An internet connection is required to join the event"));
+        }
+    },
+    TICKET_EMAIL_FOR_ONLINE_CARNET_EVENT("/alfio/templates/ticket-email-online-carnet", TemplateResource.MULTIPART_ALTERNATIVE_MIMETYPE, TemplateManager.TemplateOutput.TEXT) {
+        @Override
+        public Map<String, Object> prepareSampleModel(Organization organization, Event event, Optional<ImageData> imageData) {
+            var now = ZonedDateTime.now(event.getZoneId());
+            TicketCategory ticketCategory = new TicketCategory(0, now, now, 42, "Ticket", false, TicketCategory.Status.ACTIVE, event.getId(), false, 1000, null, null, null, null, null, "CHF", 0, null);
+            return buildModelForTicketEmail(organization, event, sampleTicketReservation(event.getZoneId()), "http://your-domain.tld/ticket-url", "http://your-domain.tld/ticket-url", "http://your-domain.tld/calendar-url", sampleTicket(event.getZoneId()), ticketCategory, Map.of("promoCode", "123456789ABCD", "promoCodeAmount", "0"));
+        }
+    },
+
+    EMAIL_FOR_PROMO_CODE("/alfio/templates/promocode-email", TemplateResource.MULTIPART_ALTERNATIVE_MIMETYPE, TemplateManager.TemplateOutput.TEXT) {
+        @Override
+        public Map<String, Object> prepareSampleModel(Organization organization, Event event, Optional<ImageData> imageData) {
+            return Map.of();
+        }
+    },
+
+    PROMOTIONAL_EMAIL("/alfio/templates/promotional-email", TemplateResource.MULTIPART_ALTERNATIVE_MIMETYPE, TemplateManager.TemplateOutput.TEXT) {
+        @Override
+        public Map<String, Object> prepareSampleModel(Organization organization, Event event, Optional<ImageData> imageData) {
+            return Map.of();
+        }
+    },
 
     TICKET_HAS_CHANGED_OWNER("/alfio/templates/ticket-has-changed-owner-txt.ms", "text/plain", TemplateManager.TemplateOutput.TEXT) {
         @Override

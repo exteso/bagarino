@@ -17,6 +17,8 @@
 package alfio.repository;
 
 import alfio.model.PromoCodeDiscount;
+import alfio.model.metadata.AlfioMetadata;
+import alfio.model.support.JSONData;
 import ch.digitalfondue.npjt.Bind;
 import ch.digitalfondue.npjt.Query;
 import ch.digitalfondue.npjt.QueryRepository;
@@ -32,7 +34,7 @@ public interface PromoCodeDiscountRepository {
     @Query("select * from promo_code where event_id_fk = :eventId order by promo_code asc")
     List<PromoCodeDiscount> findAllInEvent(@Bind("eventId") int eventId);
 
-    @Query("select * from promo_code where organization_id_fk = :organizationId and event_id_fk is null order by promo_code asc")
+    @Query("select * from promo_code where organization_id_fk = :organizationId and event_id_fk is null order by id desc")
     List<PromoCodeDiscount> findAllInOrganization(@Bind("organizationId") int organizationId);
 
     @Query("delete from promo_code where id = :id")
@@ -59,6 +61,23 @@ public interface PromoCodeDiscountRepository {
                      @Bind("emailReference") String emailReference,
                      @Bind("codeType") PromoCodeDiscount.CodeType codeType,
                      @Bind("hiddenCategoryId") Integer hiddenCategoryId);
+
+    @Query("insert into promo_code(promo_code, event_id_fk, organization_id_fk, valid_from, valid_to, discount_amount, discount_type, categories, max_usage, description, email_reference, code_type, hidden_category_id, metadata) "
+        + " values (:promoCode, :eventId, :organizationId, :start, :end, :discountAmount, :discountType, :categories, :maxUsage, :description, :emailReference, :codeType, :hiddenCategoryId, :metadata::jsonb)")
+    int addTaggedPromoCode(@Bind("promoCode") String promoCode,
+                     @Bind("eventId") Integer eventId,
+                     @Bind("organizationId") int organizationId,
+                     @Bind("start") ZonedDateTime start,
+                     @Bind("end") ZonedDateTime end,
+                     @Bind("discountAmount") int discountAmount,
+                     @Bind("discountType") PromoCodeDiscount.DiscountType discountType,
+                     @Bind("categories") String categories,
+                     @Bind("maxUsage") Integer maxUsage,
+                     @Bind("description") String description,
+                     @Bind("emailReference") String emailReference,
+                     @Bind("codeType") PromoCodeDiscount.CodeType codeType,
+                     @Bind("hiddenCategoryId") Integer hiddenCategoryId,
+                     @Bind("metadata") @JSONData AlfioMetadata metadata);
 
     @Query("insert into promo_code(promo_code, event_id_fk, organization_id_fk, valid_from, valid_to, discount_amount, discount_type, categories, max_usage, description, email_reference, code_type, hidden_category_id) "
         + " values (:promoCode, :eventId, :organizationId, :start, :end, :discountAmount, :discountType, :categories, :maxUsage, :description, :emailReference, :codeType, :hiddenCategoryId) "
@@ -90,8 +109,28 @@ public interface PromoCodeDiscountRepository {
         +" order by event_id_fk is null limit 1")
     Optional<PromoCodeDiscount> findPublicPromoCodeInEventOrOrganization(@Bind("eventId") int eventId, @Bind("promoCode") String promoCode);
 
+    @Query("select * from promo_code " +
+        "where promo_code = :promoCode ")
+    Optional<PromoCodeDiscount> getPromoCodeRaw(@Bind("promoCode") String promoCode);
+
+    @Query("select * from promo_code " +
+        "where id = :id ")
+    Optional<PromoCodeDiscount> getPromoCode(@Bind("id") int promoCodeId);
+
+    @Query("select promo_code from promo_code " +
+        "where metadata->'attributes'->>'idTicket' = :idTicket " +
+        "limit 1")
+    String getPromoCodeByIdTicket(@Bind("idTicket") String idTicket );
+
     @Query("select count(*) from promo_code where event_id_fk = :eventId or (event_id_fk is null and organization_id_fk = :organizationId)")
     Integer countByEventAndOrganizationId(@Bind("eventId") int eventId, @Bind("organizationId") int organizationId);
+
+    @Query("select * " +
+        "from promo_code where event_id_fk = :eventId " +
+        "or (event_id_fk is null and organization_id_fk = :organizationId) ")
+    List<PromoCodeDiscount> getByEventTagsAndOrganizationId(@Bind("eventId") int eventId,
+                                              @Bind("organizationId") int organizationId);
+
 
     @Query("select count(b.id) from tickets_reservation a, ticket b" +
         " where (:currentId is null or a.id <> :currentId) and a.status in ('OFFLINE_PAYMENT', 'DEFERRED_OFFLINE_PAYMENT', 'COMPLETE', 'STUCK') and a.promo_code_id_fk = :id" +
@@ -110,6 +149,17 @@ public interface PromoCodeDiscountRepository {
                              @Bind("description") String description,
                              @Bind("emailReference") String emailReference,
                              @Bind("hiddenCategoryId") Integer hiddenCategoryId);
+
+    @Query("update promo_code set valid_from = :start, valid_to = :end, max_usage = :maxUsage, categories = :categories, description = :description, email_reference = :emailReference, hidden_category_id = :hiddenCategoryId, metadata = :metadata::jsonb where id = :id")
+    int updateEventPromoCodeWithMetadata(@Bind("id") int id,
+                             @Bind("start") ZonedDateTime start,
+                             @Bind("end") ZonedDateTime end,
+                             @Bind("maxUsage") Integer maxUsage,
+                             @Bind("categories") String categories,
+                             @Bind("description") String description,
+                             @Bind("emailReference") String emailReference,
+                             @Bind("hiddenCategoryId") Integer hiddenCategoryId,
+                             @Bind("metadata") @JSONData AlfioMetadata metadata);
 
     @Query("select id from promo_code where code_type = 'ACCESS' and id = :id for update")
     Integer lockAccessCodeForUpdate(@Bind("id") int id);

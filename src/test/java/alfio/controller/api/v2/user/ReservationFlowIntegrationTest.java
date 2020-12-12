@@ -1175,7 +1175,8 @@ public class ReservationFlowIntegrationTest extends BaseIntegrationTest {
 
                 eventRepository.updateHeader(event.getId(), event.getDisplayName(), event.getWebsiteUrl(), event.getExternalUrl(), event.getTermsAndConditionsUrl(), event.getPrivacyPolicyUrl(), event.getImageUrl(),
                     event.getFileBlobId(), event.getLocation(), event.getLatitude(), event.getLongitude(), event.now(clockProvider).minusSeconds(1), event.getEnd(), event.getTimeZone(),
-                    event.getOrganizationId(), event.getLocales(), event.getFormat());
+                    event.getOrganizationId(), event.getLocales(), event.getFormat(), AlfioMetadata.empty());
+
 
                 ticketAndcheckInResult = checkInApiController.checkIn(event.getId(), ticketIdentifier, badgeScan, new TestingAuthenticationToken("ciccio", "ciccio"));
                 // we have already scanned the ticket today, so we expect to receive a warning

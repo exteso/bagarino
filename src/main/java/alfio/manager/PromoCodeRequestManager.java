@@ -17,12 +17,19 @@
 package alfio.manager;
 
 import alfio.controller.form.ReservationForm;
+import alfio.controller.support.TemplateProcessor;
 import alfio.manager.support.response.ValidatedResponse;
-import alfio.model.Event;
-import alfio.model.PromoCodeDiscount;
-import alfio.model.SpecialPrice;
+import alfio.manager.system.ConfigurationManager;
+import alfio.manager.system.Mailer;
+import alfio.model.*;
+import alfio.model.metadata.AlfioMetadata;
 import alfio.model.modification.TicketReservationModification;
 import alfio.model.result.ValidationResult;
+import alfio.model.system.ConfigurationKeys;
+import alfio.model.user.Organization;
+import alfio.repository.*;
+import alfio.repository.user.OrganizationRepository;
+import alfio.util.*;
 import alfio.repository.EventRepository;
 import alfio.repository.PromoCodeDiscountRepository;
 import alfio.repository.SpecialPriceRepository;
@@ -39,11 +46,10 @@ import org.springframework.validation.BeanPropertyBindingResult;
 import org.springframework.validation.BindingResult;
 import org.springframework.web.context.request.ServletWebRequest;
 
+import java.time.Clock;
 import java.time.ZoneId;
 import java.time.ZonedDateTime;
-import java.util.Collections;
-import java.util.Locale;
-import java.util.Optional;
+import java.util.*;
 import java.util.function.BiConsumer;
 import java.util.function.Function;
 
@@ -53,12 +59,19 @@ import static alfio.model.PromoCodeDiscount.categoriesOrNull;
 @AllArgsConstructor
 public class PromoCodeRequestManager {
 
-    private final SpecialPriceRepository specialPriceRepository;
-    private final PromoCodeDiscountRepository promoCodeRepository;
-    private final TicketCategoryRepository ticketCategoryRepository;
-    private final EventManager eventManager;
-    private final EventRepository eventRepository;
-    private final TicketReservationManager ticketReservationManager;
+    public static final Clock UTC = Clock.systemUTC();
+    private SpecialPriceRepository specialPriceRepository;
+    private PromoCodeDiscountRepository promoCodeRepository;
+    private TicketCategoryRepository ticketCategoryRepository;
+    private EventManager eventManager;
+    private EventRepository eventRepository;
+    private TicketReservationManager ticketReservationManager;
+    private TicketRepository ticketRepository;
+    private NotificationManager notificationManager;
+    private final TemplateManager templateManager;
+    private final EmailMessageRepository emailMessageRepository;
+    private final ConfigurationManager configurationManager;
+    private final OrganizationRepository organizationRepository;
     private final ClockProvider clockProvider;
 
     enum PromoCodeType {
@@ -134,6 +147,7 @@ public class PromoCodeRequestManager {
         Optional<String> maybeSpecialCode = Optional.ofNullable(StringUtils.trimToNull(promoCode));
         Optional<SpecialPrice> specialCode = maybeSpecialCode.flatMap(specialPriceRepository::getByCode);
         Optional<PromoCodeDiscount> promotionCodeDiscount = maybeSpecialCode.flatMap((trimmedCode) -> promoCodeRepository.findPublicPromoCodeInEventOrOrganization(event.getId(), trimmedCode));
+        promotionCodeDiscount = ticketReservationManager.checkPromoCodeIsValid(promotionCodeDiscount, event);
 
         var result = Pair.of(specialCode, promotionCodeDiscount);
 
@@ -204,6 +218,74 @@ public class PromoCodeRequestManager {
                                                      Optional<String> promoCodeDiscount) {
         return reservation.validate(bindingResult, ticketReservationManager, eventManager, promoCodeDiscount.orElse(null), event)
             .flatMap(selected -> ticketReservationManager.createTicketReservation(event, selected.getLeft(), selected.getRight(), promoCodeDiscount, locale, bindingResult));
+    }
+
+    public boolean sendEMail(int promoCodeId) {
+        var pCode = promoCodeRepository.findOptionalById(promoCodeId);
+        var countUsage = promoCodeRepository.countConfirmedPromoCode(promoCodeId,categoriesOrNull(pCode.get()), null, categoriesOrNull(pCode.get()) != null ? "X" : null);
+        var locale = Locale.ITALY;
+        if (pCode.isEmpty() || pCode.get().getEmailReference().isEmpty()){
+            return false;
+        }
+
+        var model = new HashMap<String, Object>();
+        model.put("promoCode", pCode.get().getPromoCode());
+        model.put("promoCodeAmount", pCode.get().getMaxUsage() - countUsage);
+        model.put("refEmail",pCode.get().getEmailReference());
+        model.put("promoCodeDetails",pCode.get().getDescription());
+        String baseUrl = configurationManager.getForSystem(ConfigurationKeys.BASE_URL).getRequiredValue();
+        model.put("baseUrl",baseUrl);
+        model.put("organization", organizationRepository.getById(pCode.get().getOrganizationId()));
+
+        //get associated event, if any
+        var eventId = pCode.get().getEventId();
+        if (eventId == null) {
+            //let's find a suitable eventID
+            if (pCode.get().getAlfioMetadata().getAttributes().containsKey("idEvent")) {
+                eventId = Integer.parseInt(pCode.get().getAlfioMetadata().getAttributes().get("idEvent").toString());
+            } else {
+                //no event, no mail (event_id is a FK on email table) :( attaching fake event
+                var eventList = eventRepository.findByOrganizationIds(Collections.singleton(pCode.get().getOrganizationId()));
+                if (eventList.size() == 0) {
+                    return false; //no event for this organization
+                } else {
+                    eventId = eventList.get(0).getId(); //I don't care what event is binded to promocode
+                }
+            }
+        }
+
+        EventAndOrganizationId eventAndOrganizationId = new EventAndOrganizationId(eventId,pCode.get().getOrganizationId());
+        var temp = TemplateProcessor.buildGenericEmail(templateManager, TemplateResource.EMAIL_FOR_PROMO_CODE, locale, model, eventAndOrganizationId );
+        var subject = "Promo code activation";
+        var textRender = temp.getTextPart();
+        var htmlRender = temp.getHtmlPart();
+        emailMessageRepository.insertWithPromoCode(eventId, "", pCode.get().getEmailReference(), null, subject, textRender, htmlRender, "", "", ZonedDateTime.now(UTC),pCode.get().getOrganizationId());
+        return true;
+    }
+
+    public boolean sendPromotionalEmail(String recipient, String subject, String message, int organizationId) {
+        var locale = Locale.ITALY;
+
+        var model = new HashMap<String, Object>();
+        model.put("message", message);
+        String baseUrl = configurationManager.getForSystem(ConfigurationKeys.BASE_URL).getRequiredValue();
+        model.put("baseUrl",baseUrl);
+        model.put("organization", organizationRepository.getById(organizationId));
+        model.put("refEmail",recipient);
+        int eventId = -1;
+        //no event, no mail (event_id is a FK on email table) :( attaching fake event
+        var eventList = eventRepository.findByOrganizationIds(Collections.singleton(organizationId));
+        if (eventList.size() == 0) {
+            return false; //no event for this organization
+        } else {
+            eventId = eventList.get(0).getId(); //I don't care what event is binded to promocode
+        }
+        EventAndOrganizationId eventAndOrganizationId = new EventAndOrganizationId(eventId,organizationId);
+        var temp = TemplateProcessor.buildGenericEmail(templateManager, TemplateResource.PROMOTIONAL_EMAIL, locale, model, eventAndOrganizationId );
+        var textRender = temp.getTextPart();
+        var htmlRender = temp.getHtmlPart();
+        emailMessageRepository.insertWithPromoCode(eventId, "", recipient, null, subject, textRender, htmlRender, "", "", ZonedDateTime.now(UTC), organizationId);
+        return true;
     }
 
 }

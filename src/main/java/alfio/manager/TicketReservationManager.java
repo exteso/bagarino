@@ -15,7 +15,113 @@
  * along with alf.io.  If not, see <http://www.gnu.org/licenses/>.
  */
 package alfio.manager;
+import static alfio.model.Audit.EntityType.RESERVATION;
+import static alfio.model.Audit.EventType.EXTERNAL_INVOICE_NUMBER;
+import static alfio.model.Audit.EventType.INIT_PAYMENT;
+import static alfio.model.Audit.EventType.MATCHING_PAYMENT_FOUND;
+import static alfio.model.Audit.EventType.PAYMENT_CONFIRMED;
+import static alfio.model.Audit.EventType.RESET_PAYMENT;
+import static alfio.model.BillingDocument.Type.CREDIT_NOTE;
+import static alfio.model.BillingDocument.Type.INVOICE;
+import static alfio.model.BillingDocument.Type.RECEIPT;
+import static alfio.model.PromoCodeDiscount.categoriesOrNull;
+import static alfio.model.TicketReservation.TicketReservationStatus.COMPLETE;
+import static alfio.model.TicketReservation.TicketReservationStatus.DEFERRED_OFFLINE_PAYMENT;
+import static alfio.model.TicketReservation.TicketReservationStatus.EXTERNAL_PROCESSING_PAYMENT;
+import static alfio.model.TicketReservation.TicketReservationStatus.IN_PAYMENT;
+import static alfio.model.TicketReservation.TicketReservationStatus.OFFLINE_PAYMENT;
+import static alfio.model.TicketReservation.TicketReservationStatus.PENDING;
+import static alfio.model.TicketReservation.TicketReservationStatus.WAITING_EXTERNAL_CONFIRMATION;
+import static alfio.model.system.ConfigurationKeys.ALLOW_FREE_TICKETS_CANCELLATION;
+import static alfio.model.system.ConfigurationKeys.ASSIGNMENT_REMINDER_INTERVAL;
+import static alfio.model.system.ConfigurationKeys.ASSIGNMENT_REMINDER_START;
+import static alfio.model.system.ConfigurationKeys.AUTOMATIC_REMOVAL_EXPIRED_OFFLINE_PAYMENT;
+import static alfio.model.system.ConfigurationKeys.BANK_ACCOUNT_NR;
+import static alfio.model.system.ConfigurationKeys.BANK_ACCOUNT_OWNER;
+import static alfio.model.system.ConfigurationKeys.BASE_URL;
+import static alfio.model.system.ConfigurationKeys.DEFERRED_BANK_TRANSFER_ENABLED;
+import static alfio.model.system.ConfigurationKeys.DEFERRED_BANK_TRANSFER_SEND_CONFIRMATION_EMAIL;
+import static alfio.model.system.ConfigurationKeys.ENABLE_TICKET_TRANSFER;
+import static alfio.model.system.ConfigurationKeys.INVOICE_ADDRESS;
+import static alfio.model.system.ConfigurationKeys.MAX_AMOUNT_OF_TICKETS_BY_RESERVATION;
+import static alfio.model.system.ConfigurationKeys.NOTIFY_ALL_FAILED_PAYMENT_ATTEMPTS;
+import static alfio.model.system.ConfigurationKeys.OFFLINE_REMINDER_HOURS;
+import static alfio.model.system.ConfigurationKeys.OPTIONAL_DATA_REMINDER_ENABLED;
+import static alfio.model.system.ConfigurationKeys.RESERVATION_MIN_TIMEOUT_AFTER_FAILED_PAYMENT;
+import static alfio.model.system.ConfigurationKeys.RESERVATION_TIMEOUT;
+import static alfio.model.system.ConfigurationKeys.SEND_TICKETS_AUTOMATICALLY;
+import static alfio.model.system.ConfigurationKeys.VAT_NR;
+import static alfio.util.MonetaryUtil.formatCents;
+import static alfio.util.MonetaryUtil.unitToCents;
+import static alfio.util.Wrappers.optionally;
+import static java.util.Arrays.asList;
+import static java.util.Collections.singletonList;
+import static java.util.Collections.singletonMap;
+import static java.util.stream.Collectors.groupingBy;
+import static java.util.stream.Collectors.joining;
+import static java.util.stream.Collectors.mapping;
+import static java.util.stream.Collectors.summingLong;
+import static java.util.stream.Collectors.toList;
+import static java.util.stream.Collectors.toMap;
+import static java.util.stream.Collectors.toSet;
+import static org.apache.commons.lang3.StringUtils.defaultString;
+import static org.apache.commons.lang3.StringUtils.equalsIgnoreCase;
+import static org.apache.commons.lang3.StringUtils.stripAll;
+import static org.apache.commons.lang3.StringUtils.stripToEmpty;
+import static org.apache.commons.lang3.StringUtils.stripToNull;
+import static org.apache.commons.lang3.StringUtils.trimToEmpty;
+import static org.apache.commons.lang3.StringUtils.trimToNull;
+import static org.apache.commons.lang3.time.DateUtils.addHours;
+import static org.apache.commons.lang3.time.DateUtils.truncate;
 
+import java.math.BigDecimal;
+import java.time.Clock;
+import java.time.ZoneId;
+import java.time.ZonedDateTime;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Calendar;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Date;
+import java.util.EnumSet;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.OptionalInt;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.Function;
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
+import java.util.stream.IntStream;
+import java.util.stream.Stream;
+
+import alfio.model.metadata.AlfioMetadata;
+import alfio.util.*;
+import org.apache.commons.codec.digest.DigestUtils;
+import org.apache.commons.lang3.ObjectUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Validate;
+import org.apache.commons.lang3.time.DateUtils;
+import org.apache.commons.lang3.tuple.Pair;
+import org.apache.commons.lang3.tuple.Triple;
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
+import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
+import org.springframework.security.core.userdetails.UserDetails;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.DefaultTransactionDefinition;
+import org.springframework.transaction.support.TransactionTemplate;
+import org.springframework.validation.BindingResult;
+import org.springframework.web.util.UriComponentsBuilder;
 import alfio.controller.api.support.TicketHelper;
 import alfio.controller.form.UpdateTicketOwnerForm;
 import alfio.controller.support.TemplateProcessor;
@@ -151,6 +257,7 @@ public class TicketReservationManager {
     private final NamedParameterJdbcTemplate jdbcTemplate;
     private final Json json;
     private final BillingDocumentManager billingDocumentManager;
+    private final EventManager eventManager;
     private final ClockProvider clockProvider;
 
     public static class NotEnoughTicketsException extends RuntimeException {
@@ -202,7 +309,9 @@ public class TicketReservationManager {
                                     NamedParameterJdbcTemplate jdbcTemplate,
                                     Json json,
                                     BillingDocumentManager billingDocumentManager,
+                                    EventManager eventManager,
                                     ClockProvider clockProvider) {
+
         this.eventRepository = eventRepository;
         this.organizationRepository = organizationRepository;
         this.ticketRepository = ticketRepository;
@@ -237,6 +346,7 @@ public class TicketReservationManager {
         this.jdbcTemplate = jdbcTemplate;
         this.json = json;
         this.billingDocumentManager = billingDocumentManager;
+        this.eventManager = eventManager;
         this.clockProvider = clockProvider;
     }
 
@@ -258,11 +368,13 @@ public class TicketReservationManager {
                                           Locale locale,
                                           boolean forWaitingQueue) throws NotEnoughTicketsException, MissingSpecialPriceTokenException, InvalidSpecialPriceTokenException {
         String reservationId = UUID.randomUUID().toString();
-        
-        Optional<PromoCodeDiscount> discount = promotionCodeDiscount
-            .flatMap(promoCodeDiscount -> promoCodeDiscountRepository.findPromoCodeInEventOrOrganization(event.getId(), promoCodeDiscount));
 
-        Optional<PromoCodeDiscount> dynamicDiscount = createDynamicPromoCode(discount, event, list, reservationId);
+        Optional<PromoCodeDiscount> tmpDiscount = promotionCodeDiscount
+            .flatMap(promoCodeDiscount -> promoCodeDiscountRepository.findPromoCodeInEventOrOrganization(event.getId(), promoCodeDiscount));
+        tmpDiscount = checkPromoCodeIsValid(tmpDiscount,event);
+        Optional<PromoCodeDiscount> dynamicDiscount = createDynamicPromoCode(tmpDiscount, event, list, reservationId);
+
+        Optional<PromoCodeDiscount> discount = tmpDiscount;
 
         ticketReservationRepository.createNewReservation(reservationId,
             event.now(clockProvider),
@@ -558,6 +670,7 @@ public class TicketReservationManager {
             }
 
             if (paymentResult.isSuccessful()) {
+
                 reservation = ticketReservationRepository.findReservationById(spec.getReservationId());
                 transitionToComplete(spec, reservationCost, paymentProxy, null);
             } else if(paymentResult.isFailed()) {
@@ -574,6 +687,57 @@ public class TicketReservationManager {
             return PaymentResult.failed("error.STEP2_STRIPE_unexpected");
         }
 
+    }
+
+    public void managePromoCodeForCarnetEvent(Event event, TicketReservation ticketReservation) {
+        var mDataSrc = eventRepository.findEventMetadataByIdMatchAttribute(event.getId(), Event.EventOccurrence.CARNET.toString());
+        mDataSrc.ifPresent(alfioMetadata -> {
+            //I have to add the promo code
+            if (alfioMetadata.getAttributes() != null && alfioMetadata.getAttributes().get(Event.EventOccurrence.CARNET.toString())!=null) {
+                int discount = -1;
+                try {
+                    discount = Integer.parseInt(alfioMetadata.getAttributes().get(Event.EventOccurrence.CARNET.toString()).toString());
+                } catch (ClassCastException e) {
+                    discount = -1;
+                }
+
+                for (Integer ticketId : ticketRepository.findTicketIdsInReservation(ticketReservation.getId())){
+                    //generating 1 vuocher for ticket
+                    var attributeList = new HashMap<String, Object>();
+                    attributeList.put("idTicket", ticketId);
+                    attributeList.put("idEvent", event.getId());
+                    attributeList.put("eventShortName", event.getShortName());
+                    attributeList.put("eventDisplayName", event.getDisplayName());
+                    attributeList.put("promoCodeType", Event.EventOccurrence.CARNET.toString());
+                    attributeList.put("buyerName", ticketReservation.getFullName());
+                    var metadata = new AlfioMetadata(
+                        alfioMetadata.getTags(),
+                        null,
+                        Map.of(),
+                        List.of(),
+                        attributeList);
+
+                    var promoCode = VoucherGenerator.generateRandomVoucher();
+                    // the promo code will be binded to the organization
+                    if (discount != -1) {
+                        eventManager.addPromoCode(
+                            promoCode,
+                            null,
+                            event.getOrganizationId(),
+                            event.getBegin(),
+                            event.getEnd(),
+                            100,
+                            PromoCodeDiscount.DiscountType.PERCENTAGE,
+                            null, discount,
+                            event.getDisplayName(),
+                            ticketReservation.getEmail(),
+                            PromoCodeDiscount.CodeType.DISCOUNT,
+                            null,
+                            metadata);
+                    }
+                }
+            }
+        });
     }
 
     private boolean paymentMethodIsBlacklisted(PaymentMethod paymentMethod, PaymentSpecification spec) {
@@ -998,6 +1162,7 @@ public class TicketReservationManager {
     void completeReservation(PaymentSpecification spec, PaymentProxy paymentProxy, boolean sendReservationConfirmationEmail, boolean sendTickets, String username) {
         String reservationId = spec.getReservationId();
         int eventId = spec.getEvent().getId();
+
         final TicketReservation reservation = ticketReservationRepository.findReservationById(reservationId);
         Locale locale = LocaleUtil.forLanguageTag(reservation.getUserLanguage());
         List<Ticket> tickets = null;
@@ -1080,6 +1245,11 @@ public class TicketReservationManager {
         waitingQueueManager.fireReservationConfirmed(reservationId);
         //we must notify the plugins about ticket assignment and send them by email
         TicketReservation reservation = findById(reservationId).orElseThrow(IllegalStateException::new);
+        // check for carnet
+        if (event.isOnline()) {
+            log.info("StripeWebhook managePromoCodeForCarnetEvent");
+            managePromoCodeForCarnetEvent(event, reservation);
+        }
         List<Ticket> assignedTickets = findTicketsInReservation(reservationId);
         assignedTickets.stream()
             .filter(ticket -> StringUtils.isNotBlank(ticket.getFullName()) || StringUtils.isNotBlank(ticket.getFirstName()) || StringUtils.isNotBlank(ticket.getEmail()))
@@ -1107,10 +1277,31 @@ public class TicketReservationManager {
                 .orElse(Map.of());
             if(event.getFormat() == Event.EventFormat.ONLINE) {
                 initialOptions = new HashMap<>(initialOptions);
-                var eventMetadata = Optional.ofNullable(eventRepository.getMetadataForEvent(event.getId()).getRequirementsDescriptions()).flatMap(m -> Optional.ofNullable(m.get(ticketLanguage.getLanguage())));
+                var allMetadata = eventRepository.getMetadataForEvent(event.getId());
+                var eventMetadata = Optional.ofNullable(allMetadata.getRequirementsDescriptions()).flatMap(m -> Optional.ofNullable(m.get(ticketLanguage.getLanguage())));
                 var categoryMetadata = Optional.ofNullable(ticketCategoryRepository.getMetadata(event.getId(), ticketCategory.getId()).getRequirementsDescriptions()).flatMap(m -> Optional.ofNullable(m.get(ticketLanguage.getLanguage())));
-                initialOptions.put("onlineCheckInUrl", ticketOnlineCheckIn(event, ticket.getUuid()));
-                initialOptions.put("prerequisites", categoryMetadata.or(() -> eventMetadata).orElse(""));
+                //check carnet event
+                if (allMetadata.getAttributes() != null
+                    && allMetadata.getAttributes().size() > 0
+                    && allMetadata.getAttributes().containsKey(Event.EventOccurrence.CARNET.toString())
+                    ){
+                    // multiple event
+                    var promoCode = promoCodeDiscountRepository.getPromoCodeByIdTicket(((Integer)ticket.getId()).toString());
+                    initialOptions.put("promoCode", promoCode);
+                    initialOptions.put("promoCodeAmount", allMetadata.getAttributes().get(Event.EventOccurrence.CARNET.toString()));
+                } else {
+                    //single event
+                    if (ticketReservation.getPromoCodeDiscountId()!=null) {
+                        var pCode = promoCodeDiscountRepository.getPromoCode(ticketReservation.getPromoCodeDiscountId());
+                        if (!pCode.isEmpty() && pCode.get().getEmailReference().equalsIgnoreCase(ticketReservation.getEmail())){
+                            //we should notify remaining promocodes
+                            initialOptions.put("promoCodeAmount", pCode.get().getMaxUsage() - promoCodeDiscountRepository.countConfirmedPromoCode(pCode.get().getId(), categoriesOrNull(pCode.get()), null, categoriesOrNull(pCode.get()) != null ? "X" : null));
+                        }
+                    }
+
+                    initialOptions.put("onlineCheckInUrl", ticketOnlineCheckIn(event, ticket.getUuid()));
+                    initialOptions.put("prerequisites", categoryMetadata.or(() -> eventMetadata).orElse(""));
+                }
             }
             var baseUrl = StringUtils.removeEnd(configurationManager.getFor(BASE_URL, ConfigurationLevel.event(event)).getRequiredValue(), "/");
             var calendarUrl = UriComponentsBuilder.fromUriString(baseUrl + "/api/v2/public/event/{eventShortName}/calendar/{currentLang}")
@@ -2288,6 +2479,38 @@ public class TicketReservationManager {
                     return Result.success(true);
                 })
             ).orElse(Result.error(ErrorCode.EventError.NOT_FOUND));
+    }
+
+    public Optional<PromoCodeDiscount> checkPromoCodeIsValid(Optional<PromoCodeDiscount> promotionCodeDiscount, Event event) {
+        if (!promotionCodeDiscount.isEmpty()
+            && promotionCodeDiscount.get().getAlfioMetadata().getTags() != null
+            && promotionCodeDiscount.get().getAlfioMetadata().getTags().size() > 0) {
+            //maybe carnet?
+            var eventMetadata = eventRepository.getMetadataForEvent(event.getId());
+            if (eventMetadata.getAttributes()!=null
+                && eventMetadata.getAttributes().size() > 0
+                && eventMetadata.getAttributes().containsKey(Event.EventOccurrence.CARNET.toString())){
+                //cannot use this promoCode: current event is a carnet too...
+                promotionCodeDiscount = Optional.empty();
+            } else if (eventMetadata.getTags() == null
+                && eventMetadata.getTags().size() == 0) {
+                //cannot use this promoCode: this event has no tags
+                promotionCodeDiscount = Optional.empty();
+            } else {
+                var shouldApplyCode = false;
+                for (var tag : eventMetadata.getTags()) {
+                    if (promotionCodeDiscount.get().getAlfioMetadata().getTags().contains(tag)){
+                        shouldApplyCode = true;
+                        break;
+                    }
+                }
+                if (!shouldApplyCode) {
+                    //cannot use this promoCode: tags don't match!
+                    promotionCodeDiscount = Optional.empty();
+                }
+            }
+        }
+        return promotionCodeDiscount;
     }
 
     private void checkOfflinePaymentsForEvent(Event event) {

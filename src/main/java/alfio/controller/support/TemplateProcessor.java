@@ -21,6 +21,7 @@ import alfio.manager.FileUploadManager;
 import alfio.manager.support.PartialTicketTextGenerator;
 import alfio.model.*;
 import alfio.model.user.Organization;
+import alfio.util.RenderedTemplate;
 import alfio.util.ImageUtil;
 import alfio.util.TemplateManager;
 import alfio.util.TemplateResource;
@@ -31,6 +32,7 @@ import com.openhtmltopdf.extend.FSStreamFactory;
 import com.openhtmltopdf.pdfboxout.PdfBoxRenderer;
 import com.openhtmltopdf.pdfboxout.PdfRendererBuilder;
 import lombok.extern.log4j.Log4j2;
+import org.apache.commons.lang3.tuple.Pair;
 import org.apache.pdfbox.io.MemoryUsageSetting;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.springframework.core.io.ClassPathResource;
@@ -49,6 +51,15 @@ public final class TemplateProcessor {
 
     private TemplateProcessor() {}
 
+    public static RenderedTemplate buildGenericEmail(TemplateManager templateManager ,
+                                                     TemplateResource template,
+                                                     Locale language,
+                                                     Map<String, Object> model,
+                                                     EventAndOrganizationId eventAndOrganizationId
+                                                         ) {
+
+        return templateManager.renderTemplate(eventAndOrganizationId, template , model, language);
+    }
 
     public static PartialTicketTextGenerator buildPartialEmail(Event event,
                                                                Organization organization,
@@ -62,7 +73,17 @@ public final class TemplateProcessor {
                                                                Map<String, Object> additionalOptions) {
         return ticket -> {
             Map<String, Object> model = TemplateResource.buildModelForTicketEmail(organization, event, ticketReservation, baseUrl, ticketURL, calendarURL, ticket, category, additionalOptions);
-            return templateManager.renderTemplate(event, event.getIsOnline() ? TemplateResource.TICKET_EMAIL_FOR_ONLINE_EVENT : TemplateResource.TICKET_EMAIL, model, language);
+            var template = TemplateResource.TICKET_EMAIL;
+            if (event.getIsOnline()){
+                if (additionalOptions.containsKey("promoCode")) {
+                    template = TemplateResource.TICKET_EMAIL_FOR_ONLINE_CARNET_EVENT ;
+                } else if (additionalOptions.containsKey("promoCodeAmount")) {
+                    template = TemplateResource.TICKET_EMAIL_FOR_ONLINE_EVENT_CODE_AMOUNT;
+                } else {
+                    template = TemplateResource.TICKET_EMAIL_FOR_ONLINE_EVENT;
+                }
+            }
+            return templateManager.renderTemplate(event,template , model, language);
         };
     }
 

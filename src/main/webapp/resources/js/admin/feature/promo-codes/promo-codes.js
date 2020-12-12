@@ -22,9 +22,13 @@
                 promocodes: '<',
                 ticketCategoriesById: '<',
                 changeDate: '<',
+                sendEmail: '<',
                 disablePromocode: '<',
                 deletePromocode: '<',
-                isAccess: '<'
+                addPromoCode: '<',
+                promoCodeType: '<',
+                isAccess: '<',
+                sendPromotionalEmail: '<'
             }
         });
 
@@ -32,12 +36,13 @@
 
     function PromoCodeCtrl($window, $uibModal, $q, PromoCodeService, ConfigurationService) {
         var ctrl = this;
-
         ctrl.isInternal = isInternal;
         ctrl.deletePromocode = deletePromocode;
         ctrl.disablePromocode = disablePromocode;
-        ctrl.changeDate = changeDate;
         ctrl.addPromoCode = addPromoCode;
+        ctrl.sendPromotionalEmail = sendPromotionalEmail;
+        ctrl.sendEmail = sendEmail;
+        ctrl.changeDate = changeDate;
 
         ctrl.$onInit = function() {
             loadData();
@@ -88,7 +93,7 @@
         }
 
         function errorHandler(error) {
-            $log.error(error.data);
+            console.error(error.data);
             alert(error.data);
         }
 
@@ -104,8 +109,18 @@
             }
         }
 
-        function changeDate(promocode) {
+        function sendEmail(promocode) {
+            if($window.confirm('Send ' +promocode.promoCode+ ' code to ' + promocode.emailReference + '?')) {
+                PromoCodeService.sendEmail(promocode.id).then(emailSent, errorHandler);
+            }
+        }
 
+        function emailSent(promocode){
+            console.log('Email sent ',promocode);
+        }
+
+        function changeDate(promocode) {
+            console.log("EditPromoCode", promocode);
             //TODO: transform component style
             $uibModal.open({
                 size: 'lg',
@@ -115,6 +130,7 @@
                     $scope.cancel = function() {$scope.$dismiss('canceled');};
                     $scope.forEvent = ctrl.forEvent;
                     $scope.event = ctrl.event;
+                    $scope.tmpTag = '';
                     var start = moment(promocode.formattedStart);
                     var end = moment(promocode.formattedEnd);
                     $scope.promoCodeDescription = ctrl.promoCodeDescription;
@@ -125,9 +141,10 @@
                         description: promocode.description,
                         emailReference: promocode.emailReference,
                         codeType: promocode.codeType,
-                        hiddenCategoryId: promocode.hiddenCategoryId
+                        hiddenCategoryId: promocode.hiddenCategoryId,
+                        alfioMetadata: promocode.alfioMetadata
                     };
-                    $scope.validCategories = _.map(ctrl.event.ticketCategories, function(c) {
+                    $scope.validCategories = _.map(ctrl.event?.ticketCategories, function(c) {
                         var c1 = angular.copy(c, {});
                         var promoCodeIdx = _.indexOf(promocode.categories, c.id);
                         c1.selected = promoCodeIdx > -1;
@@ -147,6 +164,20 @@
                             $scope.promocode.categories.push(id);
                         }
                     }
+                    $scope.addTag = function(tag) {
+                        if (!tag || tag.trim() === '')
+                            return;
+                        var idx = $scope.promocode.alfioMetadata.tags.indexOf(tag.trim().toLowerCase());
+                        if (idx < 0)
+                            $scope.promocode.alfioMetadata.tags.push(tag.trim().toLowerCase());
+                        $scope.tmpTag = '';
+                    };
+                    $scope.removeTag = function(tag) {
+                        var idx =  $scope.promocode.alfioMetadata.tags.indexOf(tag);
+                        if (idx != -1) {
+                            $scope.promocode.alfioMetadata.tags.splice(idx,1);
+                        }
+                    };
                 }
             });
         }
@@ -173,6 +204,64 @@
             });
         }
 
+        function sendPromotionalEmail(pCodes){
+            var organizationId = ctrl.organizationId;
+            var uList = pCodes.map(x => ({description: x.description, emailReference: x.emailReference, selected: false }));
+            console.log('sendPromotionalEmail', uList);
+            $uibModal.open({
+                size: 'lg',
+                templateUrl: '../resources/js/admin/feature/promo-codes/send-promotional-email-modal.html',
+                backdrop: 'static',
+                controller: function($scope) {
+                    $scope.cancel = function() {$scope.$dismiss('canceled');};
+                    $scope.recipients = uList;
+                    $scope.subject = '';
+                    $scope.message = '';
+                    $scope.searchText = '';
+                    $scope.selectAll = '';
+                    $scope.searchText = '';
+                    $scope.organizationId = organizationId;
+
+                    $scope.sendEmail = function() {
+                        console.log('Service invocation sendPromotionalEmail', $scope.recipients, $scope.subject, $scope.message, $scope.organizationId);
+
+                        var selRecipients = $scope.recipients.filter(x => x.selected);
+                        if (!selRecipients || selRecipients.length == 0) {
+                            $window.alert('Please select at least one recipient');
+                            return;
+                        }
+                        if (!$scope.subject || $scope.subject == ''){
+                            $window.alert('Please type a subject');
+                            return;
+                        }
+                        if (!$scope.message || $scope.message == ''){
+                            $window.alert('Please type a message');
+                            return;
+                        }
+                        var body = {
+                            recipients: selRecipients.map(x => x.emailReference),
+                            subject: $scope.subject,
+                            message: $scope.message
+                        }
+
+                        if($window.confirm('Send the promotional email to selected recipients?')) {
+                            PromoCodeService.sendPromotionalEmail($scope.organizationId, body).then(function() {
+                                $scope.$close(true);
+                            });
+                        }
+                    };
+                    $scope.doSelectAll = function() {
+                        console.log('doSelectAll', $scope.selectAll, $scope.searchText);
+                        $scope.recipients
+                            .filter(x => $scope.searchText == '' || x.description.toLowerCase().indexOf($scope.searchText.toLowerCase()) != -1 || x.emailReference.toLowerCase().indexOf($scope.searchText.toLowerCase()) != -1)
+                            .forEach(x => {
+                                x.selected = $scope.selectAll;
+                            });
+                    }
+                }
+            });
+        }
+
         function addPromoCode(codeType) {
             var event = ctrl.event;
             var organizationId = ctrl.organizationId;
@@ -188,6 +277,7 @@
                     $scope.event = event;
                     $scope.forEvent = forEvent;
                     $scope.promoCodeDescription = ctrl.promoCodeDescription;
+                    $scope.tmpTag = '';
 
                     var now = moment();
                     var eventBegin = forEvent ? moment(event.formattedBegin) : moment().add(1,'d').endOf('d');
@@ -214,7 +304,9 @@
                         end: {date: eventBegin.format('YYYY-MM-DD'), time: eventBegin.format('HH:mm')},
                         categories:[],
                         codeType: codeType,
-                        hiddenCategoryId: null
+                        hiddenCategoryId: null,
+                        alfioMetadata: { 'tags' : []},
+                        promoCode: makeCode(10)
                     };
 
                     $scope.addCategory = function addCategory(index, value) {
@@ -236,7 +328,6 @@
                         }
                         $scope.$close(true);
 
-
                         if(forEvent) {
                             promocode.categories = _.filter(promocode.categories, function(i) {return i != null;});
                         }
@@ -249,6 +340,34 @@
                             });
                         }, errorHandler).then(loadData);
                     };
+
+                    $scope.addTag = function(tag) {
+                        if (!tag || tag.trim() === '')
+                            return;
+                        var idx = $scope.promocode.alfioMetadata.tags.indexOf(tag.trim().toLowerCase());
+                        if (idx < 0)
+                            $scope.promocode.alfioMetadata.tags.push(tag.trim().toLowerCase());
+                        $scope.tmpTag = '';
+                    };
+                    $scope.removeTag = function(tag) {
+                        var idx =  $scope.promocode.alfioMetadata.tags.indexOf(tag);
+                        if (idx != -1) {
+                            $scope.promocode.alfioMetadata.tags.splice(idx,1);
+                        }
+                    };
+                    $scope.newCode = function() {
+                        $scope.promocode.promoCode = makeCode(10);
+                    }
+
+                    function makeCode(length) {
+                       var result           = '';
+                       var characters       = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-:_@!$*';
+                       var charactersLength = characters.length;
+                       for ( var i = 0; i < length; i++ ) {
+                          result += characters.charAt(Math.floor(Math.random() * charactersLength));
+                       }
+                       return result;
+                    }
                 }
             });
         };

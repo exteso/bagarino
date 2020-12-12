@@ -757,6 +757,11 @@
                 $scope.submitting = false;
             };
             validationPerformer($q, EventService.checkEvent, event, form, $scope, NotificationHandler).then(function() {
+                //check for carnet event type
+                if (event.format == 'ONLINE' && event.onlineOccurrence == 'CARNET'){
+                    // adding carnet attribute
+                    event.metadata.attributes['CARNET'] = event.carnetAmount;
+                }
                 EventService.createEvent(event).success(function() {
                     $scope.additionalFieldsToBeCreated = $scope.additionalFieldsToBeCreated || [];
                     $scope.additionalServicesToBeCreated = $scope.additionalServicesToBeCreated || [];
@@ -835,9 +840,6 @@
             }
             return _.map(dynamic, 'name').join(', ');
         };
-
-
-
 
         $scope.openCopyEvent = function(eventNameToPreselect) {
             var currentEventInScope = angular.copy($scope.event);
@@ -1215,6 +1217,8 @@
                 templateUrl:BASE_STATIC_URL + '/event/fragment/edit-event-header-modal.html',
                 backdrop: 'static',
                 controller: function($scope) {
+                    console.log('EDIT HEADER CALL', parentScope.event);
+
                     $scope.eventHeader = parentScope.eventHeader;
                     $scope.event = parentScope.event;
                     $scope.organizations = parentScope.organizations;
@@ -1228,6 +1232,19 @@
                         if(!form.$valid) {
                             return;
                         }
+                        //check for carnet event type
+                        if (eventHeader.format == 'ONLINE'){
+                           if ( eventHeader.onlineOccurrence == 'CARNET'){
+                                // adding carnet attribute
+                                eventHeader.metadata.attributes['CARNET'] = eventHeader.carnetAmount;
+                           } else {
+                                //removing carnet attribute
+                                Object.keys(eventHeader.metadata.attributes).forEach(function (key) {
+                                 if(key == 'CARNET') delete eventHeader.metadata.attributes[key];
+                                });
+                           }
+                        }
+
                         EventService.updateEventHeader(eventHeader).then(function(result) {
                             validationErrorHandler(result, form, form.editEventHeader).then(function(result) {
                                 $scope.$close(eventHeader);
