@@ -42,8 +42,9 @@ public enum ConfigurationKeys {
     GLOBAL_PRIVACY_POLICY("Global Privacy Policy URL (to be displayed on the event list)", false, SettingCategory.GENERAL, ComponentType.TEXT, false, EnumSet.of(SYSTEM)),
     GLOBAL_TERMS("Global Terms And Conditions (to be displayed on the event list)", false, SettingCategory.GENERAL, ComponentType.TEXT, false, EnumSet.of(SYSTEM)),
 
-    MAPS_PROVIDER("Select the maps provider (None, Google, Here)", false, SettingCategory.MAP, ComponentType.TEXT, false, EnumSet.of(SYSTEM)),
+    MAPS_PROVIDER("Select the maps provider (None, Google, Here, MapQuest)", false, SettingCategory.MAP, ComponentType.TEXT, false, EnumSet.of(SYSTEM)),
     MAPS_CLIENT_API_KEY("Google maps' client api key", false, SettingCategory.MAP, ComponentType.TEXT, false, EnumSet.of(SYSTEM)),
+    MAPS_MAPQUEST_API_KEY("MapQuest map api key", false, SettingCategory.MAP, ComponentType.TEXT, false, EnumSet.of(SYSTEM)),
 
     @Deprecated
     MAPS_HERE_APP_ID("HERE map App ID", true, SettingCategory.MAP, ComponentType.TEXT, false, EnumSet.of(SYSTEM)),
@@ -283,7 +284,7 @@ public enum ConfigurationKeys {
     }
 
     public enum GeoInfoProvider {
-        GOOGLE, HERE, NONE
+        GOOGLE, HERE, MAPQUEST, NONE
     }
 
     private static final Predicate<ConfigurationKeys> INTERNAL = ConfigurationKeys::isInternal;
